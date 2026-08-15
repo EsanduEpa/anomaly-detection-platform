@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from src.config import settings
 
 # This creates our "waiter" (the web server app)
 app = FastAPI(
@@ -11,4 +12,4 @@ app = FastAPI(
 # It tells the waiter what to do when someone visits the "/health" address.
 @app.get("/health")
 def health_check():
-    return {"status": "ok", "message": "Server is running perfectly!"}
+    return {"status": "ok", "app_name": settings.APP_NAME}
