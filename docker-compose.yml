@@ -1,0 +1,28 @@
+version: '3.8' # Which version of docker-compose syntax to use
+
+services:
+  # 1. The main database (PostgreSQL with TimescaleDB)
+  # The list of "boxes" to start
+  db:                                             # Our nickname for the database box
+    image: timescale/timescaledb:latest-pg14     # Which box to download from Docker Hub
+    container_name: anomaly_db                  # What to call it
+    environment:                                # Environment variables (like a .env file inside the box)
+      - POSTGRES_USER=admin
+      - POSTGRES_PASSWORD=secretpassword
+      - POSTGRES_DB=anomaly_db
+    ports:
+      - "5432:5432"                   # YourMac:InsideBox — forwards traffic to the box
+    volumes:
+      - pgdata:/var/lib/postgresql/data       # Save data here so it survives restarts
+    restart: always                           # Restart automatically if it crashes
+
+  # 2. The super-fast memory cache (Redis)
+  redis:
+    image: redis:7
+    container_name: anomaly_redis
+    ports:
+      - "6379:6379"
+    restart: always
+
+volumes:
+  pgdata:
