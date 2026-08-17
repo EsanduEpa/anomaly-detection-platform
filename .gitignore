@@ -5,3 +5,7 @@ __pycache__/
 venv/
 ml_models/*
 !ml_models/.gitkeep
+
+simulator/gt_*.jsonl
+simulator/ground_truth*.jsonl
+celerybeat-schedule
