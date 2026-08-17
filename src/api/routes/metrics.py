@@ -6,41 +6,27 @@ from typing import List, Optional
 from src.db.session import get_db
 from src.models.metric import MetricDataPoint
 from src.schemas.metric import MetricIngest, MetricResponse, IngestResponse
+from src.workers.tasks import process_metrics
 
 # A router is like a mini-app that groups related endpoints together
 router = APIRouter(prefix="/api/v1/metrics", tags=["Metrics"])
 
 
-@router.post("", response_model=IngestResponse, status_code=status.HTTP_202_ACCEPTED)
-def ingest_metrics(payload: MetricIngest, db: Session = Depends(get_db)):
-    """
-    Receives a batch of metrics from a service and saves them to the database.
-    Each metric (cpu, memory, etc.) is saved as a separate row.
-    """
-    # The payload has one timestamp, one service_name, one host
-    # but 7 different metric values inside payload.metrics
-    # We unpack them and save each as a separate row
-    metrics_dict = payload.metrics.model_dump()
-    rows_saved = 0
+@router.post("", response_model=IngestResponse, status_code=202)
+def ingest_metrics(payload: MetricIngest):
+    # Convert the Pydantic object to a plain dict for Celery
+    # (Celery sends data as JSON — Pydantic objects aren't JSON)
+    payload_dict = payload.model_dump(mode="json")
 
-    for metric_name, value in metrics_dict.items():
-        data_point = MetricDataPoint(
-            timestamp=payload.timestamp,
-            service_name=payload.service_name,
-            host=payload.host,
-            metric_name=metric_name,
-            value=value
-        )
-        db.add(data_point)
-        rows_saved += 1
-
-    db.commit()  # Save all rows to the database in one go
+    # Hand off to Celery — don't write to DB here
+    process_metrics.delay(payload_dict)
 
     return IngestResponse(
         status="accepted",
-        message="Metrics received and saved successfully",
-        rows_saved=rows_saved
+        message="Metrics received and queued for processing",
+        rows_saved=0
     )
+
 
 
 @router.get("", response_model=List[MetricResponse])

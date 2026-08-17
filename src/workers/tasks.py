@@ -1,10 +1,15 @@
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+
 
 from src.workers.celery_app import celery_app
 from src.processing.cleaning import clean_metrics
 from src.processing.features import compute_features
 from src.db.session import SessionLocal
+
 from src.models.metric import MetricDataPoint
+from src.models.aggregation import MetricAggregation
+
+from sqlalchemy import func as sa_func
 
 
 @celery_app.task(name="tasks.ping")
@@ -54,6 +59,83 @@ def process_metrics(self, payload: dict):
     except Exception as exc:
         db.rollback()
         raise self.retry(exc=exc, countdown=5)
+
+    finally:
+        db.close()
+
+
+
+
+
+
+@celery_app.task(name="tasks.aggregate_metrics")
+def aggregate_metrics():
+    """
+    Reads last 5 minutes of raw data.
+    Saves one summary row per service per metric.
+    """
+    db = SessionLocal()
+    try:
+        now          = datetime.now(timezone.utc)
+        window_end   = now
+        window_start = now - timedelta(minutes=5)
+
+        # Find all services that sent data in the last 5 minutes
+        services = db.query(MetricDataPoint.service_name).filter(
+            MetricDataPoint.timestamp >= window_start,
+            MetricDataPoint.timestamp <= window_end,
+        ).distinct().all()
+
+        rows_saved = 0
+
+        for (service_name,) in services:
+
+            # Find all metric types for this service
+            metrics = db.query(MetricDataPoint.metric_name).filter(
+                MetricDataPoint.service_name == service_name,
+                MetricDataPoint.timestamp    >= window_start,
+                MetricDataPoint.timestamp    <= window_end,
+            ).distinct().all()
+
+            for (metric_name,) in metrics:
+
+                # Calculate stats for this service + metric combo
+                stats = db.query(
+                    sa_func.avg(MetricDataPoint.value),
+                    sa_func.min(MetricDataPoint.value),
+                    sa_func.max(MetricDataPoint.value),
+                    sa_func.count(MetricDataPoint.value),
+                ).filter(
+                    MetricDataPoint.service_name == service_name,
+                    MetricDataPoint.metric_name  == metric_name,
+                    MetricDataPoint.timestamp    >= window_start,
+                    MetricDataPoint.timestamp    <= window_end,
+                ).one()
+
+                avg_val, min_val, max_val, count = stats
+
+                if count == 0:
+                    continue
+
+                db.add(MetricAggregation(
+                    window_start = window_start,
+                    window_end   = window_end,
+                    window_size  = "5min",
+                    service_name = service_name,
+                    metric_name  = metric_name,
+                    avg_value    = round(avg_val, 4),
+                    min_value    = round(min_val, 4),
+                    max_value    = round(max_val, 4),
+                    sample_count = count,
+                ))
+                rows_saved += 1
+
+        db.commit()
+        return {"status": "success", "aggregations_saved": rows_saved}
+
+    except Exception as exc:
+        db.rollback()
+        raise exc
 
     finally:
         db.close()

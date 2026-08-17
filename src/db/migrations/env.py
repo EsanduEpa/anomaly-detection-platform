@@ -15,6 +15,7 @@ from src.config import settings
 from src.db.session import Base
 from src.models.metric import MetricDataPoint
 from src.models.alert import Alert
+from src.models.aggregation import MetricAggregation
 
 # Alembic config object
 config = context.config
