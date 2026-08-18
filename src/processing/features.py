@@ -1,7 +1,7 @@
 from collections import deque
 import statistics
 
-from numpy.ma import std
+
 
 # How many past readings to remember per metric per service
 WINDOW_SIZE = 10
@@ -22,39 +22,38 @@ def compute_features(service_name: str, metric_name: str, value: float) -> dict:
     """
     key = _get_key(service_name, metric_name)
 
-    # Create a new history buffer if this is the first reading
     if key not in _history:
         _history[key] = deque(maxlen=WINDOW_SIZE)
 
     history = _history[key]
 
     # --- Rate of change ---
-    # How much did the value jump since the last reading?
     if len(history) > 0:
         rate_of_change = value - history[-1]
     else:
-        rate_of_change = 0.0  # No previous reading to compare
+        rate_of_change = 0.0
 
     # --- Rolling average ---
-    # Average of everything we've seen so far (up to WINDOW_SIZE readings)
     if len(history) > 0:
         rolling_avg = statistics.mean(history)
     else:
-        rolling_avg = value  # First reading — average is just itself
+        rolling_avg = value
 
     # --- Z-score ---
-    # How unusual is this value compared to recent history?
+    # Z_SCORE_MIN_STD guards against exploding z-scores when std is
+    # technically nonzero but tiny (this is what broke error_rate earlier —
+    # see the data_prep.py fix from Step 2).
+    Z_SCORE_MIN_STD = 1e-4
+
     if len(history) >= 2:
         std = statistics.stdev(history)
-        Z_SCORE_MIN_STD = 1e-4
-
-    if std > Z_SCORE_MIN_STD:
-        z_score = (value - rolling_avg) / std
+        if std > Z_SCORE_MIN_STD:
+            z_score = (value - rolling_avg) / std
+        else:
+            z_score = 0.0
     else:
-     z_score = 0.0  # Not enough history yet to calculate
+        z_score = 0.0
 
-    # Save this reading into history AFTER computing features
-    # (we compare against past values, not including current)
     history.append(value)
 
     return {

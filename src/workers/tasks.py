@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
+import numpy as np
+
 
 from src.workers.celery_app import celery_app
 from src.processing.cleaning import clean_metrics
@@ -8,8 +10,18 @@ from src.db.session import SessionLocal
 
 from src.models.metric import MetricDataPoint
 from src.models.aggregation import MetricAggregation
+from src.models.anomaly_score import AnomalyScore
+
+from src.ml.registry import registry
+from src.ml.ensemble import score_reading
+from src.ml.sequence_buffer import record_and_get_sequence
 
 from sqlalchemy import func as sa_func
+
+RAW_METRIC_NAMES = [
+    "cpu_usage", "memory_usage", "request_latency_ms",
+    "requests_per_sec", "error_rate", "db_connections", "disk_usage",
+]
 
 
 @celery_app.task(name="tasks.ping")
@@ -35,9 +47,11 @@ def process_metrics(self, payload: dict):
     db = SessionLocal()
     try:
         rows_saved = 0
+        all_features = {}   # metric_name -> {"value", "rolling_avg", "z_score", "rate_of_change"}
 
         for metric_name, value in cleaned.items():
             features = compute_features(service_name, metric_name, value)
+            all_features[metric_name] = features
 
             db.add(MetricDataPoint(
                 timestamp    = timestamp,
@@ -52,6 +66,32 @@ def process_metrics(self, payload: dict):
                 }
             ))
             rows_saved += 1
+
+
+        # Run the ensemble ONLY if every metric this reading needs is present
+        anomaly_saved = False
+        if all(m in all_features for m in RAW_METRIC_NAMES) and registry.feature_cols:
+            raw_features = _build_feature_vector(all_features)
+            sequence = record_and_get_sequence(service_name, raw_features)
+            result = score_reading(raw_features, sequence)
+
+            db.add(AnomalyScore(
+                timestamp      = timestamp,
+                service_name   = service_name,
+                host           = host,
+                metric_name    = None,   # None = this is the MULTIVARIATE ensemble verdict
+                zscore_value   = result["zscore_value"],
+                zscore_flag    = result["zscore_flag"],
+                iforest_score  = result["iforest_score"],
+                iforest_flag   = result["iforest_flag"],
+                lstm_error     = result["lstm_error"],
+                lstm_flag      = result["lstm_flag"],
+                votes          = result["votes"],
+                ensemble_score = result["ensemble_score"],
+                is_anomaly     = result["is_anomaly"],
+                model_version  = result["model_version"],
+            ))
+            anomaly_saved = True
 
         db.commit()
         return {"status": "success", "rows_saved": rows_saved}
@@ -139,3 +179,25 @@ def aggregate_metrics():
 
     finally:
         db.close()
+
+
+def _build_feature_vector(all_features: dict) -> np.ndarray:
+    """
+    Assembles the 28-number vector in the EXACT order the models were
+    trained on (registry.feature_cols), pulling the right sub-value out
+    of each metric's feature dict.
+    """
+    vector = np.zeros(len(registry.feature_cols))
+    for i, col in enumerate(registry.feature_cols):
+        if col.endswith("_z_score"):
+            metric = col[: -len("_z_score")]
+            vector[i] = all_features[metric]["z_score"]
+        elif col.endswith("_rolling_avg"):
+            metric = col[: -len("_rolling_avg")]
+            vector[i] = all_features[metric]["rolling_avg"]
+        elif col.endswith("_rate_of_change"):
+            metric = col[: -len("_rate_of_change")]
+            vector[i] = all_features[metric]["rate_of_change"]
+        else:
+            vector[i] = all_features[col]["value"]
+    return vector
