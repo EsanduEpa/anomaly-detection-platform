@@ -9,3 +9,6 @@ ml_models/*
 simulator/gt_*.jsonl
 simulator/ground_truth*.jsonl
 celerybeat-schedule
+
+.ipynb_checkpoints/
+.DS_Store
