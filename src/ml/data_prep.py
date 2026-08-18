@@ -26,6 +26,7 @@ import pickle
 from collections import deque
 from pathlib import Path
 
+from alembic.command import history
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
@@ -170,10 +171,15 @@ def compute_features(df: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
                 ravg = float(sum(history) / len(history)) if history else float(val)
 
                 # Z-score
+                Z_SCORE_MIN_STD = 1e-4  # below this, treat the metric as "not really varying" — prevents
+                        # exploding z-scores when std is technically nonzero but tiny
+                        # (this is exactly what broke error_rate, which naturally hovers
+                        # around 0.002 and gets rounded to 4 decimal places)
+
                 if len(history) >= 2:
                     mean = ravg
                     std  = float(np.std(list(history)))
-                    zs   = (float(val) - mean) / std if std > 0 else 0.0
+                    zs   = (float(val) - mean) / std if std > Z_SCORE_MIN_STD else 0.0
                 else:
                     zs = 0.0
 

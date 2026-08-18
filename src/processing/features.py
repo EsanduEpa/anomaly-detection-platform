@@ -1,6 +1,8 @@
 from collections import deque
 import statistics
 
+from numpy.ma import std
+
 # How many past readings to remember per metric per service
 WINDOW_SIZE = 10
 
@@ -44,12 +46,12 @@ def compute_features(service_name: str, metric_name: str, value: float) -> dict:
     # How unusual is this value compared to recent history?
     if len(history) >= 2:
         std = statistics.stdev(history)
-        if std > 0:
-            z_score = (value - rolling_avg) / std
-        else:
-            z_score = 0.0  # All values identical — nothing unusual
+        Z_SCORE_MIN_STD = 1e-4
+
+    if std > Z_SCORE_MIN_STD:
+        z_score = (value - rolling_avg) / std
     else:
-        z_score = 0.0  # Not enough history yet to calculate
+     z_score = 0.0  # Not enough history yet to calculate
 
     # Save this reading into history AFTER computing features
     # (we compare against past values, not including current)
