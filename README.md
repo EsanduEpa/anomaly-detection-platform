@@ -145,7 +145,7 @@ Then visit **http://127.0.0.1:8080/docs** for interactive API docs.
 ✅  Phase 1 — Foundation (API, database, simulator)
 ✅  Phase 2 — Async Data Pipeline (Celery, Redis, feature engineering)
 ✅  Phase 3 — ML Anomaly Detection Models
-⬜  Phase 4 — Incident Prediction (XGBoost + SHAP explainability)
+✅  Phase 4 — Incident Prediction (XGBoost + SHAP explainability)
 ⬜  Phase 5 — Alert & Incident Management
 ⬜  Phase 6 — Real-Time Dashboard (React)
 ⬜  Phase 7 — Monitoring & Observability (Prometheus + Grafana)
