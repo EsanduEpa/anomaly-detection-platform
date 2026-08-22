@@ -69,22 +69,45 @@ def build_escalation(result: dict) -> dict:
     }
 
 
-def _placeholder_severity(result: dict, probability) -> str:
-    """TEMPORARY stub — Step 2 replaces this with the real mapping.
-    Alert.severity is NOT NULL, so Part B needs *something* here to run
-    at all. Deliberately crude so it's obvious it's not the final rule."""
-    if probability is not None:
-        if probability >= 0.70:
+def determine_severity(detected_by: dict, escalation_probability) -> str:
+    """
+    How urgent is this alert, right now, using only what's knowable
+    in the moment (never the simulator's ground-truth severity —
+    that's leakage, see docs/PHASE_4... §3).
+
+    Primary signal: escalation_probability, from XGBoost + SHAP.
+    Thresholds borrowed from real numbers already in hand:
+      - 0.50 is the same cutoff Phase 4's own evaluation used to
+        decide "will be severe" vs not.
+      - Readings below 0.20 are meaningfully below the ~37% base
+        rate of episodes that actually turned out severe.
+
+    Fallback (escalation model unavailable): an Alert only ever gets
+    created when a MAJORITY of available detectors already agreed
+    (ensemble.py's required_votes rule), so "mild" isn't really a
+    possible outcome here — the only distinguishing signal left is
+    whether EVERY available detector agreed (unanimous) or just
+    enough of them did.
+    """
+    if escalation_probability is not None:
+        if escalation_probability >= 0.50:
             return "CRITICAL"
-        if probability >= 0.30:
+        if escalation_probability >= 0.20:
             return "WARNING"
         return "INFO"
-    return "CRITICAL" if result.get("votes", 0) >= 3 else "WARNING"
 
+    votes = detected_by.get("votes", 0)
+    total_available = detected_by.get("total_available", 0)
+    if total_available > 0 and votes == total_available:
+        return "CRITICAL"
+    return "WARNING"
 
 def build_alert_fields(service_name: str, host: str, timestamp,
                        result: dict, all_features: dict) -> dict:
     """Everything an Alert row needs, as a plain dict — ready for Alert(**fields)."""
+    detected_by = build_detected_by(result)
+    escalation  = build_escalation(result)
+
     fields = {
         "fingerprint":        build_fingerprint(service_name),
         "service_name":       service_name,
@@ -94,11 +117,11 @@ def build_alert_fields(service_name: str, host: str, timestamp,
         "last_seen_at":       timestamp,
         "occurrence_count":   1,
         "anomaly_score":      result["ensemble_score"],
-        "detected_by":        build_detected_by(result),
+        "detected_by":        detected_by,
         "triggering_metrics": pick_triggering_metrics(all_features),
     }
-    fields.update(build_escalation(result))
-    fields["severity"] = _placeholder_severity(result, fields["escalation_probability"])
+    fields.update(escalation)
+    fields["severity"] = determine_severity(detected_by, fields["escalation_probability"])
     return fields
 
 
