@@ -124,6 +124,29 @@ def build_alert_fields(service_name: str, host: str, timestamp,
     fields["severity"] = determine_severity(detected_by, fields["escalation_probability"])
     return fields
 
+def merge_alert_fields(existing_occurrence_count: int, existing_severity: str,
+                       fresh_fields: dict) -> dict:
+    """
+    Combines a NEW reading's data with what's already stored on an ACTIVE
+    alert for the same problem, instead of creating a duplicate row.
+
+    Rule: keep the LATEST snapshot for almost everything — a human
+    checking the alert wants to know what it looks like RIGHT NOW, not
+    what it looked like when it first triggered.
+
+    Exception: severity only ever RISES while an alert stays ACTIVE,
+    never drops. This is how the alert keeps its peak severity for
+    free, without a separate peak_severity column.
+    """
+    SEVERITY_RANK = {"INFO": 0, "WARNING": 1, "CRITICAL": 2}
+
+    merged = dict(fresh_fields)
+    merged["occurrence_count"] = existing_occurrence_count + 1
+
+    if SEVERITY_RANK[existing_severity] > SEVERITY_RANK[merged["severity"]]:
+        merged["severity"] = existing_severity
+
+    return merged
 
 if __name__ == "__main__":
     # quick manual test: python -m src.services.alerts
@@ -148,3 +171,24 @@ if __name__ == "__main__":
     )
     for k, v in fields.items():
         print(f"{k:<22} {v}")
+
+
+        print("\n--- merge_alert_fields test ---")
+    fresh = build_alert_fields(
+        service_name="payment-service", host="prod-server-01",
+        timestamp=datetime.datetime.now(datetime.timezone.utc),
+        result=fake_result, all_features=fake_features,
+    )
+    print("fresh severity:", fresh["severity"])
+
+    merged_a = merge_alert_fields(existing_occurrence_count=5,
+                                  existing_severity="CRITICAL",
+                                  fresh_fields=fresh)
+    print("existing=CRITICAL, fresh=%s  -> merged severity=%s, count=%s"
+          % (fresh["severity"], merged_a["severity"], merged_a["occurrence_count"]))
+
+    merged_b = merge_alert_fields(existing_occurrence_count=5,
+                                  existing_severity="INFO",
+                                  fresh_fields=fresh)
+    print("existing=INFO, fresh=%s  -> merged severity=%s, count=%s"
+          % (fresh["severity"], merged_b["severity"], merged_b["occurrence_count"]))

@@ -17,7 +17,7 @@ from src.ml.ensemble import score_reading
 from src.ml.sequence_buffer import record_and_get_sequence
 
 from src.models.alert import Alert
-from src.services.alerts import build_alert_fields
+from src.services.alerts import build_alert_fields, merge_alert_fields
 
 from sqlalchemy import func as sa_func
 
@@ -94,21 +94,41 @@ def process_metrics(self, payload: dict):
                 is_anomaly     = result["is_anomaly"],
                 model_version  = result["model_version"],
             ))
+
+            
             anomaly_saved = True
 
 
             # ── Phase 5 Step 1 Part C: raise an alert ───────────────
             # NOTE: no dedup yet — this creates ONE alert per anomalous
             #       reading. Step 3 fixes that. This is expected for now.
+            # ── Phase 5 Step 3: look up before creating ─────────────
             if result["is_anomaly"]:
-                fields = build_alert_fields(
+                fresh_fields = build_alert_fields(
                     service_name = service_name,
                     host         = host,
                     timestamp    = timestamp,
                     result       = result,
                     all_features = all_features,
                 )
-                db.add(Alert(**fields))
+                fingerprint = fresh_fields["fingerprint"]
+
+                existing = (
+                    db.query(Alert)
+                    .filter(Alert.fingerprint == fingerprint, Alert.status == "ACTIVE")
+                    .first()
+                )
+
+                if existing:
+                    merged = merge_alert_fields(
+                        existing_occurrence_count = existing.occurrence_count,
+                        existing_severity         = existing.severity,
+                        fresh_fields              = fresh_fields,
+                    )
+                    for key, value in merged.items():
+                        setattr(existing, key, value)
+                else:
+                    db.add(Alert(**fresh_fields))
 
         db.commit()
         return {"status": "success", "rows_saved": rows_saved}
@@ -119,6 +139,8 @@ def process_metrics(self, payload: dict):
 
     finally:
         db.close()
+
+    
 
 
 
