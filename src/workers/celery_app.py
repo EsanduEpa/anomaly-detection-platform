@@ -25,6 +25,10 @@ celery_app.conf.update(
 celery_app.conf.beat_schedule = {
     "aggregate-metrics-every-5-minutes": {
         "task": "tasks.aggregate_metrics",
-        "schedule": crontab(minute="*/5"),  # every 5 minutes
+        "schedule": crontab(minute="*/5"),
+    },
+    "auto-resolve-stale-alerts-every-minute": {
+        "task": "tasks.auto_resolve_alerts",
+        "schedule": 60.0,   # run every 60 seconds
     },
 }

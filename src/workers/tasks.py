@@ -26,6 +26,8 @@ RAW_METRIC_NAMES = [
     "requests_per_sec", "error_rate", "db_connections", "disk_usage",
 ]
 
+AUTO_RESOLVE_AFTER_MINUTES = 2
+
 
 @celery_app.task(name="tasks.ping")
 def ping():
@@ -211,6 +213,36 @@ def aggregate_metrics():
 
         db.commit()
         return {"status": "success", "aggregations_saved": rows_saved}
+
+    except Exception as exc:
+        db.rollback()
+        raise exc
+
+    finally:
+        db.close()
+
+@celery_app.task(name="tasks.auto_resolve_alerts")
+def auto_resolve_alerts():
+    """
+    Any ACTIVE alert that hasn't seen a new anomalous reading in a while
+    is probably over. Close it automatically, so the dashboard doesn't
+    fill up with alerts for problems that already fixed themselves.
+    """
+    db = SessionLocal()
+    try:
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=AUTO_RESOLVE_AFTER_MINUTES)
+
+        stale_alerts = db.query(Alert).filter(
+            Alert.status == "ACTIVE",
+            Alert.last_seen_at < cutoff,
+        ).all()
+
+        for alert in stale_alerts:
+            alert.status = "RESOLVED"
+            alert.resolved_at = datetime.now(timezone.utc)
+
+        db.commit()
+        return {"status": "success", "resolved_count": len(stale_alerts)}
 
     except Exception as exc:
         db.rollback()
